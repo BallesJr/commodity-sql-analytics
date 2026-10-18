@@ -1,0 +1,4 @@
+yfinance
+duckdb
+pandas
+pyarrow

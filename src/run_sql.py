@@ -1,8 +1,14 @@
 import sys
 
 import duckdb
+import pandas as pd
 
 DATABASE = "data/commodities.duckdb"
+
+# Always show every row and column, never truncate with "..."
+pd.set_option("display.max_columns", None)
+pd.set_option("display.max_rows", None)
+pd.set_option("display.width", None)
 
 # Usage: python src/run_sql.py path/to/query.sql
 if len(sys.argv) != 2:

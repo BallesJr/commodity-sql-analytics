@@ -2,3 +2,4 @@ yfinance
 duckdb
 pandas
 pyarrow
+matplotlib==3.11.2

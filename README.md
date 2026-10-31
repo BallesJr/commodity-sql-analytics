@@ -102,3 +102,94 @@ applies these decisions without deleting any row:
 - **Validation** ([10](sql/quality/10_clean_view_check.sql)): the view keeps all 15,085 rows;
   30 are suspect (28 gold, 1 Brent, 1 copper), 67 have NULL volume and 8 have NULL returns
   (the first row of each ticker, plus WTI on 2020-04-20 and 2020-04-21).
+
+## Analysis results
+
+All analysis queries read `prices_clean` and exclude `is_suspect` rows.
+
+### Returns and volatility
+
+[01_return_stats.sql](sql/analysis/01_return_stats.sql); final index from
+[05_final_values.sql](sql/analysis/05_final_values.sql) (first close = 100).
+
+| Instrument | N returns | Ann. mean log return | Ann. volatility | Worst day | Best day | Final index |
+|---|---|---|---|---|---|---|
+| Natural Gas (NG=F) | 2,514 | 4.6% | 64.5% | -26.0% | 46.5% | 157.9 |
+| WTI Crude Oil (CL=F) | 2,511 | 10.5% | 45.0% | -24.6% | 37.7% | 156.2 |
+| Brent Crude Oil (BZ=F) | 2,513 | 4.9% | 39.2% | -24.4% | 21.0% | 163.5 |
+| Wheat (ZW=F) | 2,512 | 1.0% | 31.2% | -10.7% | 21.8% | 110.6 |
+| Copper (HG=F) | 2,512 | 10.1% | 24.3% | -22.3% | 13.3% | 271.9 |
+| Gold (GC=F) | 2,485 | 13.5% | 15.6% | -5.7% | 5.9% | 403.8 |
+
+![Normalized futures prices](reports/figures/normalized_prices.png)
+
+Natural gas is the most volatile series (64.5% annualized), about four times gold (15.6%).
+Gold has the highest mean log return and the lowest volatility, and ends at 404, the highest
+of the six; wheat ends at 111, with the lowest mean return (1.0%).
+
+**Note on WTI:** its mean log return (10.5%) is inflated. The two NULL returns of April 2020
+leave out the fall from 18.27 to 10.01 but keep the rebound that follows. WTI ends at 156.2 and
+Brent at 163.5, almost the same, yet the table gives WTI more than twice Brent's mean return
+(10.5% vs 4.9%).
+
+### Rolling volatility peaks
+
+[02_rolling_vol_peaks.sql](sql/analysis/02_rolling_vol_peaks.sql): highest 21-day volatility
+(annualized) per instrument, using only full 21-return windows.
+
+| Instrument | Peak date | Peak 21-day volatility |
+|---|---|---|
+| Natural Gas (NG=F) | 2022-02-09 | 206.1% |
+| WTI Crude Oil (CL=F) | 2020-04-03 | 201.8% |
+| Brent Crude Oil (BZ=F) | 2020-04-03 | 168.1% |
+| Wheat (ZW=F) | 2022-03-21 | 120.6% |
+| Copper (HG=F) | 2025-08-01 | 101.7% |
+| Gold (GC=F) | 2020-03-27 | 45.3% |
+
+![21-day rolling volatility](reports/figures/rolling_vol.png)
+
+The oil peaks (2020-04-03) and the gold peak (2020-03-27) coincide with the COVID-19 market
+sell-off. The wheat peak (2022-03-21) coincides with the weeks after Russia's invasion of
+Ukraine.
+
+**Notes:** the gap in the WTI line (2020-04-17 to 2020-05-20) is made of windows excluded for
+having fewer than 21 returns, so the real WTI peak during the crash cannot be measured this
+way. The natural gas peak window includes 27 and 28 January 2022, its best (+46.5%) and worst
+(-26.0%) days in the sample; these moves may be a contract roll effect (not verified).
+
+### Maximum drawdowns
+
+[03_max_drawdown.sql](sql/analysis/03_max_drawdown.sql): largest fall from a running peak
+(positive closes only); final drawdown from
+[05_final_values.sql](sql/analysis/05_final_values.sql).
+
+| Instrument | Prior peak | Trough date | Trough close | Max drawdown | Final drawdown |
+|---|---|---|---|---|---|
+| WTI Crude Oil (CL=F) | 76.41 | 2020-04-21 | 10.01 | -86.9% | -53.6% |
+| Natural Gas (NG=F) | 9.68 | 2024-03-26 | 1.58 | -83.7% | -61.9% |
+| Brent Crude Oil (BZ=F) | 86.29 | 2020-04-21 | 19.33 | -77.6% | -52.5% |
+| Wheat (ZW=F) | 1425.25 | 2025-09-10 | 495.00 | -65.3% | -64.4% |
+| Copper (HG=F) | 3.29 | 2020-03-23 | 2.12 | -35.6% | -2.8% |
+| Gold (GC=F) | 2069.40 | 2022-11-03 | 1630.90 | -21.2% | -4.6% |
+
+![Drawdowns](reports/figures/drawdowns.png)
+
+Wheat ends the period at -64.4%, close to its maximum drawdown (-65.3%). Gold (-4.6%) and
+copper (-2.8%) end near their running peaks, while WTI, Brent and natural gas end 52-62% below
+theirs. The oil troughs (2020-04-21) and the copper trough (2020-03-23) coincide with the
+COVID-19 sell-off.
+
+**Note on WTI:** the -86.9% excludes the negative close. From the 76.41 peak to the -37.63
+close of 2020-04-20, the real drawdown was more than 100%.
+
+### Correlations
+
+[04_correlations.sql](sql/analysis/04_correlations.sql): correlation of daily log returns on
+the days both instruments have a return.
+
+![Correlation heatmap](reports/figures/correlation_heatmap.png)
+
+WTI and Brent are by far the most correlated pair (0.895). Natural gas is close to
+uncorrelated with everything: its highest correlation is 0.092 (with WTI) and its lowest
+0.012 (with gold). Outside the oil pair, the highest values all involve copper: with Brent
+(0.257), WTI (0.245) and gold (0.242).

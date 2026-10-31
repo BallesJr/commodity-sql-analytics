@@ -17,7 +17,7 @@ SELECT ticker,
        date               AS trough_date,
        ROUND(close, 2)       AS trough_close,
        ROUND(running_max, 2) AS prior_peak,
-       ROUND(drawdown, 4)    AS max_drawdown
+       ROUND(drawdown * 100, 1) AS max_drawdown_pct
 FROM ranked
 WHERE rn = 1
-ORDER BY max_drawdown;
+ORDER BY max_drawdown_pct;

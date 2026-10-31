@@ -14,7 +14,7 @@ ranked AS (
     WHERE n_obs = 21
 )
 SELECT ticker, date AS peak_date,
-       ROUND(vol_21d, 4) AS peak_vol_21d
+       ROUND(vol_21d * 100, 1) AS peak_vol_21d_pct
 FROM ranked
 WHERE rn = 1
-ORDER BY peak_vol_21d DESC;
+ORDER BY peak_vol_21d_pct DESC;

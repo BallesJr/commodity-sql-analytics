@@ -51,3 +51,39 @@ python -m venv .venv
 # 6. Generate the charts in reports/figures/
 .venv\Scripts\python.exe src\make_charts.py
 ```
+
+## Data quality findings
+
+The raw `prices` table has 15,085 rows and is never modified: every check reads it as loaded,
+and problem rows are only flagged in the `prices_clean` view.
+
+| Check | SQL file | Result |
+|---|---|---|
+| Missing days vs weekday calendar | [01](sql/quality/01_missing_days.sql), [02](sql/quality/02_missing_days_summary.sql) | 94-96 of 2,609 weekdays missing per ticker; on 94 dates all six tickers are missing |
+| Dates missing only for some tickers | [03](sql/quality/03_missing_days_partial.sql) | 3 dates: 2018-01-29 (gold, copper), 2023-11-23 (WTI, wheat), 2025-07-04 (wheat) |
+| Zero-volume rows | [04](sql/quality/04_suspicious_rows.sql), [05](sql/quality/05_suspicious_by_year.sql), [06](sql/quality/06_zero_volume_dates.sql) | 67 rows (0 rows with NULL volume) |
+| Flat bars (open = high = low = close) | [04](sql/quality/04_suspicious_rows.sql), [05](sql/quality/05_suspicious_by_year.sql) | 224 rows, none for WTI or natural gas; 29 of them also have volume = 0 |
+| Duplicate keys (ticker, date) | [07](sql/quality/07_integrity_checks.sql) | 0 |
+| NULL prices | [07](sql/quality/07_integrity_checks.sql) | 0 |
+| Non-positive prices | [07](sql/quality/07_integrity_checks.sql), [08](sql/quality/08_integrity_detail.sql) | 2 rows: WTI on 2020-04-20 and 2020-04-21 |
+| OHLC inconsistencies | [07](sql/quality/07_integrity_checks.sql), [08](sql/quality/08_integrity_detail.sql) | 1 row: copper on 2019-05-17, open 2.76 above high 2.7505 |
+| Largest daily moves | [09](sql/quality/09_largest_moves.sql) | WTI -306% on 2020-04-20 (close 18.27 to -37.63); largest outside WTI: natural gas +46.5% on 2022-01-27 |
+
+Main findings:
+
+1. **Gold and copper are missing on 2018-01-29**, a normal Monday on which the other four
+   tickers have prices.
+2. **Volume = 0 on open market days.** All six tickers have volume = 0 on 2023-04-06,
+   2025-06-18, 2025-07-03, 2025-08-29 and 2025-11-03, and wheat also on 2025-06-05. None of
+   these rows is a flat bar, so prices moved: here 0 means missing volume, not no trading.
+   `prices_clean` turns these zeros into NULL. (2025-07-04, a US holiday, also has volume = 0
+   for the five tickers that have a row.)
+3. **Gold has placeholder rows in 2017-2019**: 28 rows (1 in 2017, 18 in 2018, 9 in 2019)
+   with a flat bar and volume = 0, plus 1 Brent row in 2016, 29 in total. Four of the gold
+   rows are consecutive trading days (19, 20, 21 and 24 September 2018, see
+   [11](sql/quality/11_suspect_rows.sql)). The missing-days check cannot see them
+   because the rows exist. `prices_clean` marks these rows as suspect.
+4. **Negative WTI prices on 2020-04-20 are real market prices, not errors.** WTI closed at
+   -37.63 that day and opened at -14.00 the next day. Both rows have consistent OHLC values
+   and volume (247,947 and 2,288,230), so they stay in `prices_clean`; returns are left NULL
+   where the close or the previous close is not positive.

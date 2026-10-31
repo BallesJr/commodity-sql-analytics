@@ -87,3 +87,18 @@ Main findings:
    -37.63 that day and opened at -14.00 the next day. Both rows have consistent OHLC values
    and volume (247,947 and 2,288,230), so they stay in `prices_clean`; returns are left NULL
    where the close or the previous close is not positive.
+
+## Cleaning decisions
+
+The `prices` table is never modified. The [`prices_clean`](sql/views/prices_clean.sql) view
+applies these decisions without deleting any row:
+
+- **Volume = 0 becomes NULL**: it is treated as missing volume, not as zero trading.
+- **Four flags** mark each issue: `flag_zero_volume`, `flag_flat_bar`, `flag_ohlc_inconsistent`
+  and `flag_non_positive`.
+- **`is_suspect`** = (zero volume AND flat bar) OR OHLC inconsistent; the analysis queries
+  exclude these rows.
+- **`ret` and `log_ret` are NULL** when the close or the previous close is zero or negative.
+- **Validation** ([10](sql/quality/10_clean_view_check.sql)): the view keeps all 15,085 rows;
+  30 are suspect (28 gold, 1 Brent, 1 copper), 67 have NULL volume and 8 have NULL returns
+  (the first row of each ticker, plus WTI on 2020-04-20 and 2020-04-21).

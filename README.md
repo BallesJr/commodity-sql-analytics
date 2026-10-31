@@ -8,6 +8,20 @@ errors, so the data is validated before it is analyzed: missing days, zero-volum
 bars, OHLC consistency, non-positive prices, duplicate keys and extreme daily moves. Rows that
 fail the checks are flagged in a clean view, and every analysis query reads from that view.
 
+## Key findings
+
+- **Data quality:** 15,085 rows with no duplicate keys or NULL prices, but real issues: gold and
+  copper missing on 2018-01-29, zero volume on open market days, 29 placeholder rows and 1 OHLC
+  inconsistency. Negative WTI prices are kept as real data.
+- **Risk:** natural gas is the most volatile series (64.5% annualized), about four times gold (15.6%).
+- **Performance:** gold ends at 403.8 (first close = 100) with the lowest volatility and the
+  smallest max drawdown (-21.2%); wheat ends at 110.6, close to its max drawdown.
+- **Correlation:** WTI and Brent are highly correlated (0.895); all other pairs are below 0.26,
+  and natural gas is close to uncorrelated with everything.
+- **Cleaning choices change results:** WTI and Brent end at almost the same level (156.2 vs
+  163.5), but WTI shows a mean return of 10.5% vs 4.9%, because the negative-price returns are
+  excluded.
+
 ## Tech stack and repo structure
 
 - **Python 3.12.3** to download the data, load it and run the SQL files
@@ -124,8 +138,8 @@ All analysis queries read `prices_clean` and exclude `is_suspect` rows.
 ![Normalized futures prices](reports/figures/normalized_prices.png)
 
 Natural gas is the most volatile series (64.5% annualized), about four times gold (15.6%).
-Gold has the highest mean log return and the lowest volatility, and ends at 404, the highest
-of the six; wheat ends at 111, with the lowest mean return (1.0%).
+Gold has the highest mean log return and the lowest volatility, and ends at 403.8, the highest
+of the six; wheat ends at 110.6, with the lowest mean return (1.0%).
 
 **Note on WTI:** its mean log return (10.5%) is inflated. The two NULL returns of April 2020
 leave out the fall from 18.27 to 10.01 but keep the rebound that follows. WTI ends at 156.2 and
@@ -193,3 +207,28 @@ WTI and Brent are by far the most correlated pair (0.895). Natural gas is close 
 uncorrelated with everything: its highest correlation is 0.092 (with WTI) and its lowest
 0.012 (with gold). Outside the oil pair, the highest values all involve copper: with Brent
 (0.257), WTI (0.245) and gold (0.242).
+
+## Limitations
+
+- Continuous front-month futures (=F) include roll jumps; the natural gas moves of 2022-01-27/28 and 2024-04-29 may be roll effects (not verified).
+- Excluding the negative-price returns biases the WTI mean return upward, hides the real WTI drawdown (>100%) and removes the rolling volatility around April-May 2020.
+- Yahoo Finance data has gaps and placeholder rows (see [Data quality findings](#data-quality-findings)), and past values can change between downloads.
+- Correlations are full-period averages and do not show how they change over time.
+- External events are mentioned only as coinciding with the data, not as causes.
+
+## SQL techniques used
+
+- CTEs: [quality/01](sql/quality/01_missing_days.sql)
+- LEFT JOIN against a generated calendar (`generate_series`): [quality/01](sql/quality/01_missing_days.sql)
+- CROSS JOIN: [quality/01](sql/quality/01_missing_days.sql)
+- GROUP BY / HAVING: [quality/03](sql/quality/03_missing_days_partial.sql)
+- STRING_AGG: [quality/03](sql/quality/03_missing_days_partial.sql)
+- CASE WHEN aggregation: [quality/04](sql/quality/04_suspicious_rows.sql)
+- Subqueries: [quality/07](sql/quality/07_integrity_checks.sql)
+- COALESCE: [quality/07](sql/quality/07_integrity_checks.sql); NULLIF: [views/prices_clean](sql/views/prices_clean.sql)
+- Window function LAG: [quality/09](sql/quality/09_largest_moves.sql)
+- Views: [views/prices_clean](sql/views/prices_clean.sql)
+- ROW_NUMBER, rolling STDDEV with ROWS BETWEEN, named WINDOW: [analysis/02](sql/analysis/02_rolling_vol_peaks.sql)
+- Running MAX with UNBOUNDED PRECEDING: [analysis/03](sql/analysis/03_max_drawdown.sql)
+- Self-join with CORR: [analysis/04](sql/analysis/04_correlations.sql)
+- FIRST_VALUE: [analysis/05](sql/analysis/05_final_values.sql)

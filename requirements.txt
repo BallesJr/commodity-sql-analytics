@@ -1,5 +1,5 @@
-yfinance
-duckdb
-pandas
-pyarrow
+yfinance==1.7.0
+duckdb==1.5.6
+pandas==3.0.6
+pyarrow==26.0.0
 matplotlib==3.11.2

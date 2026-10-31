@@ -14,6 +14,7 @@ from matplotlib.colors import LinearSegmentedColormap
 
 DATABASE = "data/commodities.duckdb"
 OUT_DIR = Path("reports/figures")
+MAX_GAP_DAYS = 5  # break the line when consecutive dates are further apart than this
 
 # Fixed ticker order; each instrument keeps the same color in every chart
 TICKERS = ["CL=F", "BZ=F", "NG=F", "GC=F", "HG=F", "ZW=F"]
@@ -67,6 +68,17 @@ def query(con, path):
     return df
 
 
+def break_gaps(s, value_col, chart):
+    """Insert a NaN row inside each gap so matplotlib does not join the line across it."""
+    is_gap = s["date"].diff() > pd.Timedelta(days=MAX_GAP_DAYS)
+    for prev, nxt in zip(s["date"].shift()[is_gap], s["date"][is_gap]):
+        print(f"  {chart}: {s['ticker'].iloc[0]} gap {prev.date()} -> {nxt.date()} "
+              f"({(nxt - prev).days} days)")
+    breaks = s[is_gap].assign(**{value_col: np.nan})
+    breaks["date"] = breaks["date"] - pd.Timedelta(days=1)
+    return pd.concat([s, breaks]).sort_values("date")
+
+
 def format_year_axis(ax):
     ax.xaxis.set_major_locator(mdates.YearLocator(2))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
@@ -113,7 +125,7 @@ def plot_normalized_prices(df, names):
 def plot_small_multiples(df, value_col, names, title, ylabel, filename, fill=False):
     fig, axes = plt.subplots(2, 3, figsize=(13, 6.5), sharex=True, sharey=True)
     for ax, t in zip(axes.flat, TICKERS):
-        s = df[df["ticker"] == t]
+        s = break_gaps(df[df["ticker"] == t], value_col, filename)
         ax.plot(s["date"], s[value_col], color=COLORS[t], linewidth=1.1)
         if fill:
             ax.fill_between(s["date"], s[value_col], 0, color=COLORS[t], alpha=0.18, linewidth=0)

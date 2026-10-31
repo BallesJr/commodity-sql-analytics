@@ -89,7 +89,7 @@ Main findings:
    tickers have prices.
 2. **Volume = 0 on open market days.** All six tickers have volume = 0 on 2023-04-06,
    2025-06-18, 2025-07-03, 2025-08-29 and 2025-11-03, and wheat also on 2025-06-05. None of
-   these rows is a flat bar, so prices moved: so 0 most likely means missing volume, not no trading.
+   these rows is a flat bar, so prices moved and 0 most likely means missing volume, not no trading.
    `prices_clean` turns these zeros into NULL. (2025-07-04, a US holiday, also has volume = 0
    for the five tickers that have a row.)
 3. **Gold has placeholder rows in 2017-2019**: 28 rows (1 in 2017, 18 in 2018, 9 in 2019)

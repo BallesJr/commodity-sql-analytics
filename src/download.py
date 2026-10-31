@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 import yfinance as yf
 
@@ -25,6 +27,7 @@ for ticker in TICKERS:
 
 # Combine all tickers into one table and save it
 prices = pd.concat(frames, ignore_index=True)
+Path(OUTPUT).parent.mkdir(parents=True, exist_ok=True)  # data/ is not in git, create it if missing
 prices.to_parquet(OUTPUT, index=False)
 
 print(prices.head(5))

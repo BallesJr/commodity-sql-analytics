@@ -1,10 +1,16 @@
+from pathlib import Path
+
 import duckdb
 
 PARQUET = "data/raw_prices.parquet"
 DATABASE = "data/commodities.duckdb"
 
-# Price table: one row per ticker per day, loaded as-is from the parquet file
-CREATE_PRICES = f"""
+
+def create_prices_sql(parquet_path=PARQUET):
+    """SQL that builds the price table: one row per ticker per day, loaded as-is
+    from the parquet file."""
+    path = Path(parquet_path).as_posix().replace("'", "''")
+    return f"""
 CREATE OR REPLACE TABLE prices AS
 SELECT
     CAST(date AS DATE)     AS date,
@@ -14,8 +20,9 @@ SELECT
     CAST(low AS DOUBLE)    AS low,
     CAST(close AS DOUBLE)  AS close,
     CAST(volume AS BIGINT) AS volume
-FROM read_parquet('{PARQUET}');
+FROM read_parquet('{path}');
 """
+
 
 # Reference table describing each instrument
 CREATE_INSTRUMENTS = """
@@ -43,14 +50,30 @@ SELECT ticker, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
 FROM prices GROUP BY ticker ORDER BY ticker;
 """
 
-# Connect (creates the database file if it does not exist)
-con = duckdb.connect(DATABASE)
 
-con.execute(CREATE_PRICES)
-con.execute(CREATE_INSTRUMENTS)
-con.execute(INSERT_INSTRUMENTS)
+def ingest(con, parquet_path=PARQUET):
+    """(Re)create the `prices` and `instruments` tables in the given connection."""
+    con.execute(create_prices_sql(parquet_path))
+    con.execute(CREATE_INSTRUMENTS)
+    con.execute(INSERT_INSTRUMENTS)
 
-# Print as a pandas DataFrame (plain text, works in any Windows terminal)
-print(con.sql(SUMMARY).df())
 
-con.close()
+def summary(con):
+    """Rows and date range per ticker, as a pandas DataFrame."""
+    return con.sql(SUMMARY).df()
+
+
+def main(database=DATABASE, parquet=PARQUET):
+    # Connect (creates the database file if it does not exist)
+    con = duckdb.connect(database)
+
+    ingest(con, parquet)
+
+    # Print as a pandas DataFrame (plain text, works in any Windows terminal)
+    print(summary(con))
+
+    con.close()
+
+
+if __name__ == "__main__":
+    main()

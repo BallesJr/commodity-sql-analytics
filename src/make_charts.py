@@ -84,14 +84,14 @@ def format_year_axis(ax):
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
 
 
-def save(fig, name):
-    path = OUT_DIR / name
+def save(fig, name, out_dir=OUT_DIR):
+    path = Path(out_dir) / name
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {path.as_posix()}")
 
 
-def plot_normalized_prices(df, names):
+def plot_normalized_prices(df, names, out_dir=OUT_DIR):
     fig, ax = plt.subplots(figsize=(11, 6))
     ax.axhline(100, color=AXIS, linewidth=1)
 
@@ -119,10 +119,11 @@ def plot_normalized_prices(df, names):
     ax.set_ylabel("Index level")
     format_year_axis(ax)
     ax.legend(loc="upper left", ncol=3, fontsize=9)
-    save(fig, "normalized_prices.png")
+    save(fig, "normalized_prices.png", out_dir)
 
 
-def plot_small_multiples(df, value_col, names, title, ylabel, filename, fill=False):
+def plot_small_multiples(df, value_col, names, title, ylabel, filename, fill=False,
+                         out_dir=OUT_DIR):
     fig, axes = plt.subplots(2, 3, figsize=(13, 6.5), sharex=True, sharey=True)
     for ax, t in zip(axes.flat, TICKERS):
         s = break_gaps(df[df["ticker"] == t], value_col, filename)
@@ -136,10 +137,10 @@ def plot_small_multiples(df, value_col, names, title, ylabel, filename, fill=Fal
         ax.set_ylabel(ylabel)
     fig.suptitle(title, x=0.01, ha="left", fontsize=13, color=INK)
     fig.tight_layout()
-    save(fig, filename)
+    save(fig, filename, out_dir)
 
 
-def plot_correlation_heatmap(df, names):
+def plot_correlation_heatmap(df, names, out_dir=OUT_DIR):
     # Build a symmetric 6x6 matrix with 1 on the diagonal
     idx = {t: i for i, t in enumerate(TICKERS)}
     m = np.eye(len(TICKERS))
@@ -172,22 +173,28 @@ def plot_correlation_heatmap(df, names):
     cbar.set_label("Correlation")
     cbar.outline.set_visible(False)
     ax.set_title("Correlation of daily log returns, 2016-2025", loc="left")
-    save(fig, "correlation_heatmap.png")
+    save(fig, "correlation_heatmap.png", out_dir)
 
 
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+def main(database=DATABASE, out_dir=OUT_DIR):
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-# Read-only: charts never modify the database
-con = duckdb.connect(DATABASE, read_only=True)
-names = dict(con.sql("SELECT ticker, name FROM instruments").fetchall())
+    # Read-only: charts never modify the database
+    con = duckdb.connect(database, read_only=True)
+    names = dict(con.sql("SELECT ticker, name FROM instruments").fetchall())
 
-plot_normalized_prices(query(con, "sql/charts/normalized_prices.sql"), names)
-plot_small_multiples(query(con, "sql/charts/rolling_vol.sql"), "vol_21d", names,
-                     "21-day rolling volatility (annualized)", "Volatility",
-                     "rolling_vol.png")
-plot_small_multiples(query(con, "sql/charts/drawdowns.sql"), "drawdown", names,
-                     "Drawdown from running peak", "Drawdown",
-                     "drawdowns.png", fill=True)
-plot_correlation_heatmap(query(con, "sql/analysis/04_correlations.sql"), names)
+    plot_normalized_prices(query(con, "sql/charts/normalized_prices.sql"), names, out_dir)
+    plot_small_multiples(query(con, "sql/charts/rolling_vol.sql"), "vol_21d", names,
+                         "21-day rolling volatility (annualized)", "Volatility",
+                         "rolling_vol.png", out_dir=out_dir)
+    plot_small_multiples(query(con, "sql/charts/drawdowns.sql"), "drawdown", names,
+                         "Drawdown from running peak", "Drawdown",
+                         "drawdowns.png", fill=True, out_dir=out_dir)
+    plot_correlation_heatmap(query(con, "sql/analysis/04_correlations.sql"), names, out_dir)
 
-con.close()
+    con.close()
+
+
+if __name__ == "__main__":
+    main()

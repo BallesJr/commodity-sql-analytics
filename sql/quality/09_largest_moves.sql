@@ -7,6 +7,7 @@ WITH r AS (
 SELECT ticker, prev_date, date, prev_close, close,
        ROUND(close / prev_close - 1, 4) AS ret
 FROM r
-WHERE prev_close IS NOT NULL
+WHERE prev_close > 0
+  AND close > 0
 ORDER BY ABS(close / prev_close - 1) DESC
 LIMIT 15;

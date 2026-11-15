@@ -82,7 +82,7 @@ and problem rows are only flagged in the `prices_clean` view.
 | NULL prices | [07](sql/quality/07_integrity_checks.sql) | 0 |
 | Non-positive prices | [07](sql/quality/07_integrity_checks.sql), [08](sql/quality/08_integrity_detail.sql) | 2 rows: WTI on 2020-04-20 and 2020-04-21 |
 | OHLC inconsistencies | [07](sql/quality/07_integrity_checks.sql), [08](sql/quality/08_integrity_detail.sql) | 1 row: copper on 2019-05-17, open 2.76 above high 2.7505 |
-| Largest daily moves | [09](sql/quality/09_largest_moves.sql) | WTI -306% on 2020-04-20 (close 18.27 to -37.63); largest outside WTI: natural gas +46.5% on 2022-01-27 |
+| Largest daily moves | [09](sql/quality/09_largest_moves.sql) | Natural gas +46.5% on 2022-01-27, then WTI +37.7% on 2020-04-22. Moves into or out of a non-positive close are excluded, as in `prices_clean`: the WTI fall from 18.27 to -37.63 on 2020-04-20 and the rebound to 10.01 the next day have no meaningful percentage return |
 
 Main findings:
 
@@ -109,10 +109,11 @@ The `prices` table is never modified. The [`prices_clean`](sql/views/prices_clea
 applies these decisions without deleting any row:
 
 - **Volume = 0 becomes NULL**: it is treated as missing volume, not as zero trading.
-- **Four flags** mark each issue: `flag_zero_volume`, `flag_flat_bar`, `flag_ohlc_inconsistent`
-  and `flag_non_positive`.
-- **`is_suspect`** = (zero volume AND flat bar) OR OHLC inconsistent; the analysis queries
-  exclude these rows.
+- **Five flags** mark each issue: `flag_zero_volume`, `flag_flat_bar`, `flag_ohlc_inconsistent`,
+  `flag_non_positive` and `flag_null_price`. They are always TRUE or FALSE, never NULL.
+- **`is_suspect`** = (zero volume AND flat bar) OR OHLC inconsistent OR a NULL price; the
+  analysis queries exclude these rows. The current data has no NULL prices, so the last rule
+  does not flag any row.
 - **`ret` and `log_ret` are NULL** when the close or the previous close is zero or negative.
 - **Validation** ([10](sql/quality/10_clean_view_check.sql)): the view keeps all 15,085 rows;
   30 are suspect (28 gold, 1 Brent, 1 copper), 67 have NULL volume and 8 have NULL returns
@@ -240,16 +241,15 @@ The slow tests open the real database read-only and check the numbers quoted in 
 that the stored view matches `sql/views/prices_clean.sql`, and that the database file is left
 unchanged.
 
-Three known bugs are documented as expected failures (`xfail`): the tests describe the correct
-behaviour and the SQL has not been changed. None of them affects the current data, which has
-no NULL prices or volumes and a single OHLC issue (an open outside the range):
+Three bugs first documented by this suite as expected failures have been fixed, and their
+tests now pass as normal tests:
 
-- **`08_integrity_detail.sql` does not list every row that `07_integrity_checks.sql` counts:**
-  a close outside the high-low range is missing, and `high < low` is labelled `open_outside`.
-- **`prices_clean` flags are NULL instead of false when a price or the volume is NULL:**
-  `is_suspect` can then be NULL, and `WHERE NOT is_suspect` drops the row from the analysis.
-- **`09_largest_moves.sql` does not check that the previous close is positive:** a previous
-  close of 0 gives an infinite return, and a negative one a return with no meaning.
+- **`prices_clean` flags were NULL when a price or the volume was NULL.** They are now always
+  TRUE or FALSE, and a row with a NULL price is marked as suspect.
+- **`08_integrity_detail.sql` did not list every row that `07_integrity_checks.sql` counts.**
+  It now lists all of them, with every issue of each row in an `issues` column.
+- **`09_largest_moves.sql` computed returns from non-positive closes.** It now uses the same
+  rule as `prices_clean`: both the close and the previous close must be positive.
 
 ## SQL techniques used
 

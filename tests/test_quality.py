@@ -178,52 +178,94 @@ def test_07_each_bad_row_increments_its_own_counter(integrity):
     assert list(out.index) == sorted(out.index)
 
 
-def test_08_details_non_positive_and_open_outside_rows(integrity):
+def issues_by_ticker(out):
+    return {t: sorted(set(g["issues"])) for t, g in out.groupby("ticker")}
+
+
+def test_08_lists_exactly_the_rows_counted_by_07(integrity):
     out = run_sql(integrity, "quality/08_integrity_detail.sql")
-    detail = {r.ticker: (r.issue, r.open_gap) for r in out.itertuples()}
+    rows_per_ticker = out.groupby("ticker").size().to_dict()
 
-    assert detail["NONPOS"] == ("non_positive", 0.0)
-    assert detail["OPENHIGH"] == ("open_outside", 1.0)     # open 12 - high 11
-    assert detail["OPENLOW"] == ("open_outside", 1.0)      # low 9 - open 8
-    assert "CLEAN" not in detail and "DUP" not in detail
+    assert rows_per_ticker == {"NULLPRICE": 1, "NONPOS": 1, "OPENHIGH": 1, "OPENLOW": 1,
+                               "CLOSEOUT": 1, "HIGHLOW": 1,
+                               "DUP": 2}       # both rows of the duplicated key, not the third
+    assert "CLEAN" not in rows_per_ticker
 
 
-def test_08_non_positive_label_wins_and_rows_are_ordered_by_date(con):
+def test_08_names_every_issue_of_each_row(integrity):
+    out = run_sql(integrity, "quality/08_integrity_detail.sql")
+
+    assert issues_by_ticker(out) == {
+        "NULLPRICE": ["null_price"],
+        "NONPOS":    ["non_positive"],
+        "OPENHIGH":  ["open_outside"],
+        "OPENLOW":   ["open_outside"],
+        "CLOSEOUT":  ["close_outside"],
+        # high < low leaves no valid range, so open and close are outside it too
+        "HIGHLOW":   ["high_below_low, open_outside, close_outside"],
+        "DUP":       ["duplicate_key"],
+    }
+
+
+def test_08_open_gap_measures_how_far_the_open_is_outside_the_range(integrity):
+    out = run_sql(integrity, "quality/08_integrity_detail.sql")
+    gap = {r.ticker: r.open_gap for r in out.itertuples() if r.ticker != "DUP"}
+
+    assert gap["OPENHIGH"] == 1.0                          # open 12 - high 11
+    assert gap["OPENLOW"] == 1.0                           # low 9 - open 8
+    assert gap["NONPOS"] == 0.0 and gap["CLOSEOUT"] == 0.0
+
+
+def test_08_lists_all_issues_of_a_row_and_orders_by_date(con):
     add_prices(con, [raw(dt.date(2024, 1, 5), "A", 12, 11, 9, 10, 5),
                      raw(dt.date(2024, 1, 3), "A", 5, 2, -1, 1, 5)])    # non-positive and open outside
     out = run_sql(con, "quality/08_integrity_detail.sql")
 
     assert [d.date() for d in pd.to_datetime(out["date"])] == [dt.date(2024, 1, 3), dt.date(2024, 1, 5)]
-    assert out["issue"].tolist() == ["non_positive", "open_outside"]
+    assert out["issues"].tolist() == ["non_positive, open_outside", "open_outside"]
     assert out["open_gap"].tolist() == [3.0, 1.0]
 
 
-DETAIL_BUG = ("Known bug: 08_integrity_detail only filters on non-positive prices and open outside "
-              "the range, so it does not list every row that 07_integrity_checks counts: a close "
-              "outside the range is missing, and high < low is reported as 'open_outside'.")
+def test_08_is_empty_for_clean_data(con):
+    add_prices(con, series("A", [10, 11, 12]) + series("B", [5, 6]))
+
+    assert run_sql(con, "quality/08_integrity_detail.sql").empty
 
 
-@pytest.mark.xfail(strict=True, reason=DETAIL_BUG)
-def test_08_lists_every_row_counted_by_07(integrity):
-    out = run_sql(integrity, "quality/08_integrity_detail.sql")
-
-    assert set(out["ticker"]) == {"NONPOS", "OPENHIGH", "OPENLOW", "CLOSEOUT", "HIGHLOW"}
-
-
-@pytest.mark.xfail(strict=True, reason=DETAIL_BUG)
-def test_08_labels_a_close_outside_the_range(integrity):
-    out = run_sql(integrity, "quality/08_integrity_detail.sql")
-    issues = dict(zip(out["ticker"], out["issue"]))
-
-    assert issues.get("CLOSEOUT") == "close_outside"
+# 07 column -> label used in the `issues` column of 08
+ISSUE_LABELS = {"null_prices": "null_price", "non_positive": "non_positive",
+                "high_below_low": "high_below_low", "open_outside": "open_outside",
+                "close_outside": "close_outside"}
 
 
-@pytest.mark.xfail(strict=True, reason=DETAIL_BUG)
-def test_08_labels_high_below_low(integrity):
-    out = run_sql(integrity, "quality/08_integrity_detail.sql")
-    issues = dict(zip(out["ticker"], out["issue"]))
+def test_08_row_counts_per_issue_match_the_counts_of_07(integrity):
+    # Extra rows so that some tickers have several problems, on one row or on several
+    add_prices(integrity, [
+        raw(dt.date(2024, 1, 4), "NONPOS", 5, 2, -1, 1, 5),            # non-positive + open outside
+        raw(dt.date(2024, 1, 5), "NONPOS", None, 11, 9, 12, 5),        # NULL open + close outside
+        raw(dt.date(2024, 1, 4), "DUP", 10, 11, 9, 8, 5),              # duplicated key whose rows
+        raw(dt.date(2024, 1, 4), "DUP", 10, 11, 9, 8, 5),              # are also close outside
+        raw(dt.date(2024, 1, 4), "DUP", 10, 11, 9, 8, 5),
+    ])
+    counts = run_sql(integrity, "quality/07_integrity_checks.sql").set_index("ticker")
+    detail = run_sql(integrity, "quality/08_integrity_detail.sql")
+    labels = detail["issues"].str.split(", ")
 
-    assert issues.get("HIGHLOW") == "high_below_low"
+    for ticker in counts.index:
+        of_ticker = detail["ticker"] == ticker
+        for column, label in ISSUE_LABELS.items():
+            listed = (of_ticker & labels.apply(lambda found: label in found)).sum()
+            assert listed == counts.loc[ticker, column], (ticker, column)
+        # 07 counts duplicated keys, 08 lists their rows: compare distinct keys
+        dup_rows = detail[of_ticker & labels.apply(lambda found: "duplicate_key" in found)]
+        assert dup_rows["date"].nunique() == counts.loc[ticker, "duplicate_keys"], ticker
+
+    assert counts.loc["DUP", "duplicate_keys"] == 2
+    assert counts.loc["NONPOS", ["null_prices", "non_positive", "open_outside",
+                                 "close_outside"]].tolist() == [1, 2, 1, 1]
+    # only known labels appear, and every listed row has at least one
+    assert {l for found in labels for l in found} <= set(ISSUE_LABELS.values()) | {"duplicate_key"}
+    assert (detail["issues"] != "").all()
 
 
 # ---09: largest moves---
@@ -254,30 +296,38 @@ def test_09_returns_at_most_fifteen_rows(con):
     assert len(run_sql(con, "quality/09_largest_moves.sql")) == 15
 
 
-MOVES_BUG = ("Known bug: 09_largest_moves divides by the previous close without checking that it "
-             "is positive (the view does check), so a previous close of 0 gives an infinite "
-             "return and a negative one gives a return with a meaningless sign and size.")
-
-
-@pytest.mark.xfail(strict=True, reason=MOVES_BUG)
 def test_09_has_no_infinite_return_after_a_zero_close(con):
     add_prices(con, [bar(dt.date(2024, 1, 2), close=10.0),
                      raw(dt.date(2024, 1, 3), "A", 1, 2, 0, 0, 5),
-                     bar(dt.date(2024, 1, 4), close=10.0)])
+                     bar(dt.date(2024, 1, 4), close=10.0),
+                     bar(dt.date(2024, 1, 5), close=11.0)])
     out = run_sql(con, "quality/09_largest_moves.sql")
 
-    assert np.isfinite(out["ret"].dropna()).all()
+    assert np.isfinite(out["ret"]).all()
+    assert out["ret"].tolist() == [0.1]                    # only 10 -> 11 has a valid return
 
 
-@pytest.mark.xfail(strict=True, reason=MOVES_BUG)
-def test_09_has_no_return_measured_from_a_non_positive_close(con):
+def test_09_has_no_return_measured_from_or_to_a_non_positive_close(con):
+    # Same rule as prices_clean: both the close and the previous close must be positive
     add_prices(con, [raw(dt.date(2024, 1, 2), "A", 18, 19, 17, 18.27, 5),
                      raw(dt.date(2024, 1, 3), "A", 17, 18, -40, -37.63, 5),
-                     raw(dt.date(2024, 1, 6), "A", -14, 13, -16, 10.01, 5)])
+                     raw(dt.date(2024, 1, 4), "A", -14, 13, -16, 10.01, 5),
+                     raw(dt.date(2024, 1, 5), "A", 10, 14, 10, 13.78, 5)])
     out = run_sql(con, "quality/09_largest_moves.sql")
 
-    from_bad_close = out[out["prev_close"] <= 0]
-    assert from_bad_close["ret"].isna().all()
+    assert ((out["prev_close"] > 0) & (out["close"] > 0)).all()
+    assert len(out) == 1
+    assert out["ret"].tolist() == [round(13.78 / 10.01 - 1, 4)]
+
+
+def test_09_lists_the_same_returns_as_the_clean_view(con):
+    add_prices(con, series("A", [100, 110, 55, 56.1])
+               + [raw(dt.date(2024, 1, 5), "A", 1, 2, -3, -1, 5), bar(dt.date(2024, 1, 8), close=50.0)])
+    moves = run_sql(con, "quality/09_largest_moves.sql")
+    view = con.sql("SELECT date, ROUND(ret, 4) AS ret FROM prices_clean WHERE ret IS NOT NULL").df()
+
+    assert sorted(moves["ret"]) == sorted(view["ret"])
+    assert set(pd.to_datetime(moves["date"])) == set(pd.to_datetime(view["date"]))
 
 
 # ---10-11: checks on the clean view---

@@ -7,7 +7,8 @@ import pytest
 from helpers import add_prices, bar, clean_row, raw
 
 D1, D2, D3, D4 = (dt.date(2024, 1, d) for d in (2, 3, 4, 5))
-FLAGS = ["flag_zero_volume", "flag_flat_bar", "flag_ohlc_inconsistent", "flag_non_positive"]
+FLAGS = ["flag_zero_volume", "flag_flat_bar", "flag_ohlc_inconsistent", "flag_non_positive",
+         "flag_null_price"]
 
 
 # ---Flags---
@@ -16,7 +17,7 @@ def test_healthy_row_has_every_flag_false(con):
     add_prices(con, [bar(D1)])
     row = clean_row(con, D1)
 
-    assert [row[f] for f in FLAGS] == [False, False, False, False]
+    assert [row[f] for f in FLAGS] == [False, False, False, False, False]
     assert row["is_suspect"] is False
     assert row["volume"] == 100
 
@@ -84,6 +85,8 @@ def test_non_positive_flag_looks_at_the_lowest_price(con, o, h, l, c, expected):
     (raw(D1, "A", 10, 10, 10, 10, 0), True, "zero volume and flat bar"),
     (raw(D1, "A", 12, 11, 9, 10, 5), True, "OHLC inconsistent"),
     (raw(D1, "A", -14, -10, -40, -37.63, 5), False, "non-positive but consistent"),
+    (raw(D1, "A", 10, 11, 9, None, 5), True, "NULL price"),
+    (raw(D1, "A", 10, 11, 9, 10, None), False, "NULL volume"),
 ])
 def test_is_suspect_truth_table(con, row, expected, case):
     add_prices(con, [row])
@@ -171,23 +174,17 @@ def test_return_after_a_suspect_row_is_measured_from_the_suspect_close(con):
     assert clean_row(con, D3)["ret"] == pytest.approx(1.2)
 
 
-# ---Known issue: NULL inputs give NULL flags instead of false---
+# ---NULL inputs: flags are never NULL---
 
-NULL_FLAGS_BUG = ("Known bug: the flags are plain comparisons, so a NULL volume or price makes "
-                  "them NULL instead of false; is_suspect then becomes NULL and "
-                  "'WHERE NOT is_suspect' silently drops the row from every analysis query.")
-
-
-@pytest.mark.xfail(strict=True, reason=NULL_FLAGS_BUG)
 def test_null_volume_gives_false_flags_not_null(con):
     add_prices(con, [raw(D1, "A", 10, 11, 9, 10, None)])
     row = clean_row(con, D1)
 
-    assert [row[f] for f in FLAGS] == [False, False, False, False]
+    assert [row[f] for f in FLAGS] == [False, False, False, False, False]
     assert row["is_suspect"] is False
+    assert row["volume"] is None
 
 
-@pytest.mark.xfail(strict=True, reason=NULL_FLAGS_BUG)
 def test_flat_bar_with_null_volume_is_not_suspect(con):
     # Unknown volume is not zero volume, so the placeholder rule does not apply
     add_prices(con, [raw(D1, "A", 10, 10, 10, 10, None)])
@@ -198,18 +195,50 @@ def test_flat_bar_with_null_volume_is_not_suspect(con):
     assert row["is_suspect"] is False
 
 
-@pytest.mark.xfail(strict=True, reason=NULL_FLAGS_BUG)
-def test_null_price_gives_false_flags_not_null(con):
-    add_prices(con, [raw(D1, "A", None, 11, 9, 10, 5)])
+@pytest.mark.parametrize("o, h, l, c, missing", [
+    (None, 11, 9, 10, "open"),
+    (10, None, 9, 10, "high"),
+    (10, 11, None, 10, "low"),
+    (10, 11, 9, None, "close"),
+    (None, None, None, None, "all four"),
+])
+def test_row_with_a_null_price_is_flagged_and_suspect(con, o, h, l, c, missing):
+    # No valid return can be computed from a row with a missing price
+    add_prices(con, [raw(D1, "A", o, h, l, c, 5)])
     row = clean_row(con, D1)
 
-    assert [row[f] for f in FLAGS] == [False, False, False, False]
-    assert row["is_suspect"] is False
+    assert row["flag_null_price"] is True, missing
+    assert row["is_suspect"] is True, missing
+    assert [row[f] for f in FLAGS if f != "flag_null_price"] == [False, False, False, False]
 
 
-@pytest.mark.xfail(strict=True, reason=NULL_FLAGS_BUG)
-def test_rows_with_nulls_are_not_dropped_by_the_not_is_suspect_filter(con):
-    add_prices(con, [bar(D1), raw(D2, "A", 10, 10, 10, 10, None), raw(D3, "A", None, 11, 9, 10, 5)])
+def test_null_price_does_not_hide_another_problem_on_the_same_row(con):
+    add_prices(con, [raw(D1, "A", None, 9, 11, 10, 0)])    # NULL open, high < low, zero volume
+    row = clean_row(con, D1)
 
-    kept = con.sql("SELECT COUNT(*) FROM prices_clean WHERE NOT is_suspect").fetchone()[0]
-    assert kept == 3
+    assert row["flag_null_price"] is True
+    assert row["flag_ohlc_inconsistent"] is True
+    assert row["flag_zero_volume"] is True
+    assert row["is_suspect"] is True
+
+
+def test_not_is_suspect_filter_keeps_null_volume_rows_and_drops_null_price_rows(con):
+    add_prices(con, [bar(D1),
+                     raw(D2, "A", 10, 10, 10, 10, None),   # flat bar, unknown volume: kept
+                     raw(D3, "A", None, 11, 9, 10, 5)])    # NULL open: suspect
+
+    kept = con.sql("SELECT date FROM prices_clean WHERE NOT is_suspect ORDER BY date").fetchall()
+    dropped = con.sql("SELECT date FROM prices_clean WHERE is_suspect").fetchall()
+    assert [r[0] for r in kept] == [D1, D2]
+    assert [r[0] for r in dropped] == [D3]                 # every row is on one side or the other
+
+
+def test_flags_and_is_suspect_are_never_null(con):
+    add_prices(con, [bar(D1),
+                     raw(D2, "A", None, None, None, None, None),
+                     raw(D3, "A", 10, 10, 10, 10, None),
+                     raw(D4, "A", None, 11, 9, 10, 0),
+                     raw(D1, "B", 1, 2, 0, None, 5)])
+    for column in FLAGS + ["is_suspect"]:
+        nulls = con.sql(f"SELECT COUNT(*) FROM prices_clean WHERE {column} IS NULL").fetchone()[0]
+        assert nulls == 0, column
